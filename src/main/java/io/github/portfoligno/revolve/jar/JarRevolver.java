@@ -64,6 +64,7 @@ public class JarRevolver {
             cleanUps.add(new SimpleImmutableEntry<>(
                 checkIsInstance(t, Duration.class),
                 checkIsInstance(r, Runnable.class)));
+            return;
           }
         }
         throw new IllegalStateException("The clean-up list is not modifiable outside of the factory call");
