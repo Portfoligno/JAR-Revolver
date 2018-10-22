@@ -25,7 +25,7 @@ class ErrorHelper {
     }
   }
 
-  static void writeRevolverError(Path jarPath, @Nullable Throwable t) {
+  static void writeRevolverError(@NotNull Path jarPath, @Nullable Throwable t) {
     try {
       Path file = jarPath.toAbsolutePath().getParent().resolve("revolver.error");
 
