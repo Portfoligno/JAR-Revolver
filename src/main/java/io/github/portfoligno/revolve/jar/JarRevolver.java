@@ -18,9 +18,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.function.*;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.*;
 
@@ -43,7 +41,7 @@ public class JarRevolver {
   }
 
   private void revolve(
-      boolean isInitialized, @NotNull Path path, @NotNull Consumer<Object> consumer,
+      boolean isInitialized, @NotNull Path path, @NotNull Consumer<Object> handler,
       Entry<ClassLoaderLeakPreventor, List<Entry<Duration, Runnable>>> @NotNull [] cleanUpHolder) {
     List<Entry<Duration, Runnable>> cleanUps = new ArrayList<>();
     ClassLoaderLeakPreventor leakPreventor = null;
@@ -53,12 +51,10 @@ public class JarRevolver {
       leakPreventor = leakPreventorFactory.newLeakPreventor(classLoader);
       leakPreventor.runPreClassLoaderInitiators();
 
-      //noinspection unchecked
-      Function main = (Function) classLoader.loadMainClass().getConstructor().newInstance();
+      Object main = classLoader.loadMainClass().getConstructor().newInstance();
       AtomicBoolean lock = new AtomicBoolean();
 
-      //noinspection unchecked
-      Object instance = main.apply((BiConsumer) (t, r) -> {
+      BiConsumer cleanUpRegistry = (t, r) -> {
         synchronized (lock) {
           if (!lock.get()) {
             cleanUps.add(new SimpleImmutableEntry<>(
@@ -68,10 +64,14 @@ public class JarRevolver {
           }
         }
         throw new IllegalStateException("The clean-up list is not modifiable outside of the factory call");
-      });
+      };
+      //noinspection unchecked
+      Object instance = handler instanceof Supplier && main instanceof BiFunction ?
+          ((BiFunction) main).apply(((Supplier) handler).get(), cleanUpRegistry) :
+          ((Function) main).apply(cleanUpRegistry);
       lock.set(true);
 
-      consumer.accept(instance);
+      handler.accept(instance);
 
       writeRevolverError(null, cleanUpHolder);
       Std.out(() -> "Instance revolved: " + instance);
@@ -130,10 +130,10 @@ public class JarRevolver {
   }
 
   public void loadOrExitJvm(
-      @NotNull Path path, @NotNull Consumer<Object> consumer, @NotNull ThrowingRunnable postInitialization) {
+      @NotNull Path path, @NotNull Consumer<Object> handler, @NotNull ThrowingRunnable postInitialization) {
     //noinspection unchecked
     Entry<ClassLoaderLeakPreventor, List<Entry<Duration, Runnable>>>[] cleanUpHolder = new Entry[1];
-    revolve(false, path, consumer, cleanUpHolder);
+    revolve(false, path, handler, cleanUpHolder);
 
     try {
       postInitialization.run();
@@ -145,6 +145,6 @@ public class JarRevolver {
       exitDelayed();
       return;
     }
-    new FileWatcher(path, () -> revolve(true, path, consumer, cleanUpHolder)).start();
+    new FileWatcher(path, () -> revolve(true, path, handler, cleanUpHolder)).start();
   }
 }
