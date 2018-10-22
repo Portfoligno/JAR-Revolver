@@ -6,7 +6,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.PrintWriter;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 
 class ErrorHelper {
   static final long EXIT_DELAY = 3600;
@@ -25,17 +25,17 @@ class ErrorHelper {
     }
   }
 
-  static void writeRevolverError(@Nullable Throwable t, @NotNull Object identifier) {
+  static void writeRevolverError(Path jarPath, @Nullable Throwable t) {
     try {
-      String file = "revolver." + Integer.toHexString(identifier.hashCode()) + ".error";
+      Path file = jarPath.toAbsolutePath().getParent().resolve("revolver.error");
 
       if (t != null) {
-        try (PrintWriter writer = new PrintWriter(file)) {
+        try (PrintWriter writer = new PrintWriter(file.toFile())) {
           t.printStackTrace(writer);
         }
       }
       else {
-        Files.deleteIfExists(Paths.get(file));
+        Files.deleteIfExists(file);
       }
     }
     catch (Exception e) {

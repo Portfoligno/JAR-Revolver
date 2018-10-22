@@ -73,13 +73,13 @@ public class JarRevolver {
 
       handler.accept(instance);
 
-      writeRevolverError(null, cleanUpHolder);
+      writeRevolverError(path, null);
       Std.out(() -> "Instance revolved: " + instance);
     }
     catch (Throwable t) {
       throwIfFatal(t);
 
-      writeRevolverError(t, cleanUpHolder);
+      writeRevolverError(path, t);
       Std.err("Error during revolution");
       Std.err(t);
 
