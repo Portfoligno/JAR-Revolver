@@ -8,17 +8,18 @@ import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventor;
 import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventorFactory;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.*;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.*;
 
@@ -42,8 +43,8 @@ public class JarRevolver {
 
   private void revolve(
       boolean isInitialized, @NotNull Path path, @NotNull Consumer<Object> handler,
-      Entry<ClassLoaderLeakPreventor, List<Entry<Duration, Runnable>>> @NotNull [] cleanUpHolder) {
-    List<Entry<Duration, Runnable>> cleanUps = new ArrayList<>();
+      Entry<ClassLoaderLeakPreventor, List<CleanUp>> @NotNull [] cleanUpHolder) {
+    List<CleanUp> cleanUps = new ArrayList<>();
     ClassLoaderLeakPreventor leakPreventor = null;
 
     try {
@@ -53,22 +54,12 @@ public class JarRevolver {
 
       Object main = classLoader.loadMainClass().getConstructor().newInstance();
       AtomicBoolean lock = new AtomicBoolean();
+      Object registry = new Registry(lock, cleanUps);
 
-      BiConsumer cleanUpRegistry = (t, r) -> {
-        synchronized (lock) {
-          if (!lock.get()) {
-            cleanUps.add(new SimpleImmutableEntry<>(
-                checkIsInstance(t, Duration.class),
-                checkIsInstance(r, Runnable.class)));
-            return;
-          }
-        }
-        throw new IllegalStateException("The clean-up list is not modifiable outside of the factory call");
-      };
       //noinspection unchecked
       Object instance = handler instanceof Supplier && main instanceof BiFunction ?
-          ((BiFunction) main).apply(((Supplier) handler).get(), cleanUpRegistry) :
-          ((Function) main).apply(cleanUpRegistry);
+          ((BiFunction) main).apply(((Supplier) handler).get(), registry) :
+          ((Function) main).apply(registry);
       lock.set(true);
 
       handler.accept(instance);
@@ -90,7 +81,7 @@ public class JarRevolver {
       scheduleCleanUps(leakPreventor, cleanUps);
       return;
     }
-    Entry<ClassLoaderLeakPreventor, List<Entry<Duration, Runnable>>> lastCleanUps = cleanUpHolder[0];
+    Entry<ClassLoaderLeakPreventor, List<CleanUp>> lastCleanUps = cleanUpHolder[0];
 
     if (lastCleanUps != null) {
       scheduleCleanUps(lastCleanUps.getKey(), lastCleanUps.getValue());
@@ -98,41 +89,26 @@ public class JarRevolver {
     cleanUpHolder[0] = new SimpleImmutableEntry<>(leakPreventor, cleanUps);
   }
 
-  private void scheduleCleanUps(@Nullable ClassLoaderLeakPreventor p, @NotNull List<Entry<Duration, Runnable>> tasks) {
-    if (tasks.isEmpty()) {
-      if (p != null) {
-        p.runCleanUps();
-      }
+  private void scheduleCleanUps(@Nullable ClassLoaderLeakPreventor p, @NotNull List<CleanUp> cleanUps) {
+    if (!cleanUps.isEmpty()) {
+      AtomicInteger remaining = new AtomicInteger(cleanUps.size());
+
+      // ClassLoaderLeakPreventor#runCleanUps will be called after the last clean-up
+      cleanUps.forEach(f -> f.accept(p, executorService, remaining));
     }
-    else {
-      AtomicInteger remaining = new AtomicInteger(tasks.size());
-
-      tasks.forEach(e -> {
-        Runnable r = e.getValue();
-
-        executorService.schedule(() -> {
-          try {
-            r.run();
-          }
-          catch (Throwable t) {
-            throwIfFatal(t);
-
-            Std.err("Error during clean-up");
-            Std.err(t);
-          }
-          if (remaining.decrementAndGet() == 0 && p != null) {
-            p.runCleanUps();
-          }
-        }, e.getKey().toMillis(), TimeUnit.MILLISECONDS);
-      });
+    else if (p != null) {
+      // No other clean-ups, run immediately
+      p.runCleanUps();
     }
-    Std.out(() -> tasks.size() + " clean-ups scheduled");
+
+    Std.out(() -> cleanUps.size() + " clean-ups scheduled");
   }
+
 
   public void loadOrExitJvm(
       @NotNull Path path, @NotNull Consumer<Object> handler, @NotNull ThrowingRunnable postInitialization) {
     //noinspection unchecked
-    Entry<ClassLoaderLeakPreventor, List<Entry<Duration, Runnable>>>[] cleanUpHolder = new Entry[1];
+    Entry<ClassLoaderLeakPreventor, List<CleanUp>>[] cleanUpHolder = new Entry[1];
     revolve(false, path, handler, cleanUpHolder);
 
     try {
