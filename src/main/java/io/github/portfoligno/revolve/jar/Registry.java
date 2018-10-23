@@ -52,14 +52,13 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
     throw new IllegalStateException("The clean-up list is not modifiable outside of the factory call");
   }
 
-  private void register(@NotNull Consumer callback) {
+  private void register(@NotNull Consumer<Runnable> callback) {
     register((preventor, executorService, remainingCount) -> executorService.submit(
         () -> {
           AtomicBoolean isUsed = new AtomicBoolean();
 
           try {
-            //noinspection unchecked
-            callback.accept((Runnable) () -> runPreventorCleanUps(preventor, remainingCount, isUsed));
+            callback.accept(() -> runPreventorCleanUps(preventor, remainingCount, isUsed));
           }
           catch (Throwable t) {
             throwIfFatal(t);
@@ -93,6 +92,7 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
 
   @Override
   public void accept(@Nullable Consumer<Runnable> callback) {
+    //noinspection unchecked
     register(
         checkIsInstance(callback, Consumer.class));
   }
