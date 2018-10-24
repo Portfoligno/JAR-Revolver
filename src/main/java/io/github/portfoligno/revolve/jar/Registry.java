@@ -53,12 +53,13 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   }
 
   private void register(@NotNull Consumer<Runnable> callback) {
-    register((preventor, executorService, remainingCount) -> executorService.submit(
+    register((preventor, executorService, remainingCount) -> executorService.execute(
         () -> {
           AtomicBoolean isUsed = new AtomicBoolean();
 
           try {
-            callback.accept(() -> runPreventorCleanUps(preventor, remainingCount, isUsed));
+            callback.accept(() -> executorService.execute(
+                () -> runPreventorCleanUps(preventor, remainingCount, isUsed)));
           }
           catch (Throwable t) {
             throwIfFatal(t);
