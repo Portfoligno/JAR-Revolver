@@ -57,7 +57,7 @@ public class JarRevolver {
       AtomicBoolean lock = new AtomicBoolean();
       Object registry = new Registry(lock, cleanUps);
 
-      //noinspection unchecked
+      @SuppressWarnings("unchecked") // Enforcement on outbound parameter types is not feasible
       Object instance = handler instanceof Supplier && main instanceof BiFunction ?
           ((BiFunction) main).apply(((Supplier) handler).get(), registry) :
           ((Function) main).apply(registry);
@@ -108,7 +108,7 @@ public class JarRevolver {
 
   public void loadOrExitJvm(
       @NotNull Path path, @NotNull Consumer<Object> handler, @NotNull ThrowingRunnable postInitialization) {
-    //noinspection unchecked
+    @SuppressWarnings("unchecked") // Generic array construction
     Entry<ClassLoaderLeakPreventor, List<CleanUp>>[] cleanUpHolder = new Entry[1];
 
     Path absolutePath = toAbsolutePath(path);

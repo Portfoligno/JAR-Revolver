@@ -91,9 +91,9 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   }
 
 
+  @SuppressWarnings("unchecked") // Enforcement on outbound parameter types is not feasible
   @Override
   public void accept(@Nullable Consumer<Runnable> callback) {
-    //noinspection unchecked
     register(
         checkIsInstance(callback, Consumer.class));
   }
