@@ -111,9 +111,11 @@ public class JarRevolver {
     @SuppressWarnings("unchecked") // Generic array construction
     Entry<ClassLoaderLeakPreventor, List<CleanUp>>[] cleanUpHolder = new Entry[1];
 
+    // Load for the first time
     Path absolutePath = toAbsolutePath(path);
     revolve(false, absolutePath, handler, cleanUpHolder);
 
+    // Run user defined post-initialization
     try {
       postInitialization.run();
     }
@@ -124,6 +126,12 @@ public class JarRevolver {
       exitDelayed();
       return;
     }
-    new FileWatcher(absolutePath, () -> revolve(true, absolutePath, handler, cleanUpHolder)).start();
+
+    // Start watching for file updates
+    FileWatcher
+        .create(
+            absolutePath,
+            () -> revolve(true, absolutePath, handler, cleanUpHolder))
+        .start();
   }
 }
