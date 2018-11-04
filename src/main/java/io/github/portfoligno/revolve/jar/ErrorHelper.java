@@ -12,11 +12,10 @@ class ErrorHelper {
   static final long EXIT_DELAY = 3600;
 
   static <T> T checkIsInstance(@Nullable Object reference, @NotNull Class<T> type) {
-    if (!type.isInstance(reference)) {
-      throw new ClassCastException(type.getName());
+    if (reference != null) {
+      return type.cast(reference);
     }
-    //noinspection unchecked
-    return (T) reference;
+    throw new NullPointerException("Expected an instance of " + type.getName());
   }
 
   static void throwIfFatal(@NotNull Throwable t) {
