@@ -8,6 +8,8 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static io.github.portfoligno.revolve.jar.FileWatcher.append;
+
 class ErrorHelper {
   static final long EXIT_DELAY = 3600;
 
@@ -26,7 +28,7 @@ class ErrorHelper {
 
   static void writeRevolverError(@NotNull Path jarPath, @Nullable Throwable t) {
     try {
-      Path file = jarPath.toAbsolutePath().getParent().resolve("revolver.error");
+      Path file = append(jarPath, ".error");
 
       if (t != null) {
         try (PrintWriter writer = new PrintWriter(file.toFile())) {

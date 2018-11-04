@@ -22,6 +22,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.*;
+import static io.github.portfoligno.revolve.jar.FileWatcher.toAbsolutePath;
 
 public class JarRevolver {
   private final @NotNull ClassLoaderLeakPreventorFactory leakPreventorFactory;
@@ -109,7 +110,9 @@ public class JarRevolver {
       @NotNull Path path, @NotNull Consumer<Object> handler, @NotNull ThrowingRunnable postInitialization) {
     //noinspection unchecked
     Entry<ClassLoaderLeakPreventor, List<CleanUp>>[] cleanUpHolder = new Entry[1];
-    revolve(false, path, handler, cleanUpHolder);
+
+    Path absolutePath = toAbsolutePath(path);
+    revolve(false, absolutePath, handler, cleanUpHolder);
 
     try {
       postInitialization.run();
@@ -121,6 +124,6 @@ public class JarRevolver {
       exitDelayed();
       return;
     }
-    new FileWatcher(path, () -> revolve(true, path, handler, cleanUpHolder)).start();
+    new FileWatcher(absolutePath, () -> revolve(true, absolutePath, handler, cleanUpHolder)).start();
   }
 }

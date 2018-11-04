@@ -17,6 +17,19 @@ class FileWatcher extends Thread {
     this.action = action;
   }
 
+  static @NotNull Path toAbsolutePath(@NotNull Path path) {
+    Path absolutePath = path.toAbsolutePath();
+
+    if (absolutePath.getFileName() != null) {
+      return absolutePath;
+    }
+    throw new IllegalArgumentException(path.toString());
+  }
+
+  static @NotNull Path append(@NotNull Path path, @NotNull String suffix) {
+    return path.getParent().resolve(path.getFileName() + suffix);
+  }
+
   @Override
   public void run() {
     try (WatchService watchService = FileSystems.getDefault().newWatchService()) {
