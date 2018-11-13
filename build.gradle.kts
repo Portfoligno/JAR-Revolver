@@ -17,6 +17,6 @@ repositories {
 }
 dependencies {
   compileOnly("org.jetbrains:annotations:16.0.3")
-  implementation("io.github.portfoligno:std:1.1.0")
+  implementation("io.github.portfoligno:std:1.2.1")
   implementation("se.jiderhamn.classloader-leak-prevention:classloader-leak-prevention-core:2.6.1")
 }
