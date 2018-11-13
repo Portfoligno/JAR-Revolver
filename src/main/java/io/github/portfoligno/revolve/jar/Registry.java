@@ -4,19 +4,68 @@ import io.github.portfoligno.log.std.Std;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventor;
+import se.jiderhamn.classloader.leak.prevention.ClassLoaderPreMortemCleanUp;
+import se.jiderhamn.classloader.leak.prevention.Logger;
+import se.jiderhamn.classloader.leak.prevention.PreClassLoaderInitiator;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.checkIsInstance;
 import static io.github.portfoligno.revolve.jar.ErrorHelper.throwIfFatal;
 
 class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Runnable> {
+  private static final BiConsumer<ClassLoaderLeakPreventor, Runnable> doInLeakSafeClassLoader =
+      getDoInLeakSafeClassLoader();
+
+  private static abstract class MethodNameMarker extends ClassLoaderLeakPreventor {
+    public MethodNameMarker(
+        ClassLoader leakSafeClassLoader, ClassLoader classLoader, Logger logger,
+        Collection<PreClassLoaderInitiator> preClassLoaderInitiators,
+        Collection<ClassLoaderPreMortemCleanUp> cleanUps) {
+      super(leakSafeClassLoader, classLoader, logger, preClassLoaderInitiators, cleanUps);
+    }
+
+    @Override
+    protected abstract void doInLeakSafeClassLoader(Runnable runnable);
+  }
+
+  @SuppressWarnings("OptionalGetWithoutIsPresent")
+  private static BiConsumer<ClassLoaderLeakPreventor, Runnable> getDoInLeakSafeClassLoader() {
+    try {
+      Method method = ClassLoaderLeakPreventor.class.getDeclaredMethod(
+          Stream
+              .of(MethodNameMarker.class.getDeclaredMethods())
+              .filter(m -> !m.isSynthetic())
+              .findFirst()
+              .get()
+              .getName(),
+          Runnable.class);
+      method.setAccessible(true);
+
+      return (preventor, runnable) -> {
+        try {
+          method.invoke(preventor, runnable);
+        }
+        catch (IllegalAccessException | InvocationTargetException e) {
+          throw new RuntimeException(e);
+        }
+      };
+    }
+    catch (NoSuchMethodException e) {
+      throw new AssertionError(e);
+    }
+  }
+
   private final @NotNull AtomicBoolean lock;
   private final @NotNull List<CleanUp> entries;
 
@@ -58,8 +107,11 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
           AtomicBoolean isUsed = new AtomicBoolean();
 
           try {
-            callback.accept(() -> executorService.execute(
-                () -> runPreventorCleanUps(preventor, remainingCount, isUsed)));
+            Runnable runnable = () -> executorService.execute(
+                () -> runPreventorCleanUps(preventor, remainingCount, isUsed));
+
+            callback.accept(preventor == null ?
+                runnable : () -> doInLeakSafeClassLoader.accept(preventor, runnable));
           }
           catch (Throwable t) {
             throwIfFatal(t);
