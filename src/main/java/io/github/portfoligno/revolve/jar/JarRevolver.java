@@ -3,19 +3,14 @@ package io.github.portfoligno.revolve.jar;
 import io.github.portfoligno.log.std.Std;
 import io.github.portfoligno.revolve.jar.function.ThrowingRunnable;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventor;
 import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventorFactory;
 
 import java.nio.file.Path;
-import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
-import java.util.List;
-import java.util.Map.Entry;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -44,23 +39,22 @@ public class JarRevolver {
 
   private void revolve(
       boolean isInitialized, @NotNull Path path, @NotNull Consumer<Object> handler,
-      Entry<ClassLoaderLeakPreventor, List<CleanUp>> @NotNull [] cleanUpHolder) {
-    List<CleanUp> cleanUps = new ArrayList<>();
-    ClassLoaderLeakPreventor leakPreventor = null;
+      JarRevolverContext @NotNull [] contextHolder) {
+    JarRevolverContext context = null;
 
     try {
       JarClassLoader classLoader = new JarClassLoader(path);
-      leakPreventor = leakPreventorFactory.newLeakPreventor(classLoader);
-      leakPreventor.runPreClassLoaderInitiators();
+      ClassLoaderLeakPreventor preventor = leakPreventorFactory.newLeakPreventor(classLoader);
+      preventor.runPreClassLoaderInitiators();
 
       Object main = classLoader.loadMainClass().getConstructor().newInstance();
       AtomicBoolean lock = new AtomicBoolean();
-      Object registry = new Registry(lock, cleanUps);
+      context = new JarRevolverContext(preventor, lock, new ArrayList<>());
 
       @SuppressWarnings("unchecked") // Enforcement on outbound parameter types is not feasible
       Object instance = handler instanceof Supplier && main instanceof BiFunction ?
-          ((BiFunction) main).apply(((Supplier) handler).get(), registry) :
-          ((Function) main).apply(registry);
+          ((BiFunction) main).apply(((Supplier) handler).get(), context) :
+          ((Function) main).apply(context);
       lock.set(true);
 
       handler.accept(instance);
@@ -79,41 +73,26 @@ public class JarRevolver {
         Std.err("No instance available, shutting down in " + EXIT_DELAY + " ms");
         exitDelayed();
       }
-      scheduleCleanUps(leakPreventor, cleanUps);
+      if (context != null) {
+        context.scheduleCleanUps(executorService);
+      }
       return;
     }
-    Entry<ClassLoaderLeakPreventor, List<CleanUp>> lastCleanUps = cleanUpHolder[0];
+    JarRevolverContext lastContext = contextHolder[0];
 
-    if (lastCleanUps != null) {
-      scheduleCleanUps(lastCleanUps.getKey(), lastCleanUps.getValue());
+    if (lastContext != null) {
+      lastContext.scheduleCleanUps(executorService);
     }
-    cleanUpHolder[0] = new SimpleImmutableEntry<>(leakPreventor, cleanUps);
+    contextHolder[0] = context;
   }
-
-  private void scheduleCleanUps(@Nullable ClassLoaderLeakPreventor p, @NotNull List<CleanUp> cleanUps) {
-    if (!cleanUps.isEmpty()) {
-      AtomicInteger remaining = new AtomicInteger(cleanUps.size());
-
-      // ClassLoaderLeakPreventor#runCleanUps will be called after the last clean-up
-      cleanUps.forEach(f -> f.accept(p, executorService, remaining));
-    }
-    else if (p != null) {
-      // No other clean-ups, run immediately
-      p.runCleanUps();
-    }
-
-    Std.out(() -> cleanUps.size() + " clean-ups scheduled");
-  }
-
 
   public void loadOrExitJvm(
       @NotNull Path path, @NotNull Consumer<Object> handler, @NotNull ThrowingRunnable postInitialization) {
-    @SuppressWarnings("unchecked") // Generic array construction
-    Entry<ClassLoaderLeakPreventor, List<CleanUp>>[] cleanUpHolder = new Entry[1];
+    JarRevolverContext[] contextHolder = new JarRevolverContext[1];
 
     // Load for the first time
     Path absolutePath = toAbsolutePath(path);
-    revolve(false, absolutePath, handler, cleanUpHolder);
+    revolve(false, absolutePath, handler, contextHolder);
 
     // Run user defined post-initialization
     try {
@@ -131,7 +110,7 @@ public class JarRevolver {
     FileWatcher
         .create(
             absolutePath,
-            () -> revolve(true, absolutePath, handler, cleanUpHolder))
+            () -> revolve(true, absolutePath, handler, contextHolder))
         .start();
   }
 }

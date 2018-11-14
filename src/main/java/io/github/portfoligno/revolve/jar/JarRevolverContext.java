@@ -4,78 +4,54 @@ import io.github.portfoligno.log.std.Std;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventor;
-import se.jiderhamn.classloader.leak.prevention.ClassLoaderPreMortemCleanUp;
-import se.jiderhamn.classloader.leak.prevention.Logger;
-import se.jiderhamn.classloader.leak.prevention.PreClassLoaderInitiator;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Duration;
-import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.checkIsInstance;
 import static io.github.portfoligno.revolve.jar.ErrorHelper.throwIfFatal;
+import static io.github.portfoligno.revolve.jar.PreventorHelper.DO_IN_LEAK_SAFE_CLASS_LOADER;
 
-class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Runnable> {
-  private static final BiConsumer<ClassLoaderLeakPreventor, Runnable> doInLeakSafeClassLoader =
-      getDoInLeakSafeClassLoader();
-
-  private static abstract class MethodNameMarker extends ClassLoaderLeakPreventor {
-    public MethodNameMarker(
-        ClassLoader leakSafeClassLoader, ClassLoader classLoader, Logger logger,
-        Collection<PreClassLoaderInitiator> preClassLoaderInitiators,
-        Collection<ClassLoaderPreMortemCleanUp> cleanUps) {
-      super(leakSafeClassLoader, classLoader, logger, preClassLoaderInitiators, cleanUps);
-    }
-
-    @Override
-    protected abstract void doInLeakSafeClassLoader(Runnable runnable);
+class JarRevolverContext implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Runnable> {
+  @FunctionalInterface
+  interface CleanUp {
+    void accept(@NotNull ScheduledExecutorService executorService, @NotNull AtomicInteger remainingCount);
   }
 
-  @SuppressWarnings("OptionalGetWithoutIsPresent")
-  private static BiConsumer<ClassLoaderLeakPreventor, Runnable> getDoInLeakSafeClassLoader() {
-    try {
-      Method method = ClassLoaderLeakPreventor.class.getDeclaredMethod(
-          Stream
-              .of(MethodNameMarker.class.getDeclaredMethods())
-              .filter(m -> !m.isSynthetic())
-              .findFirst()
-              .get()
-              .getName(),
-          Runnable.class);
-      method.setAccessible(true);
-
-      return (preventor, runnable) -> {
-        try {
-          method.invoke(preventor, runnable);
-        }
-        catch (IllegalAccessException | InvocationTargetException e) {
-          throw new RuntimeException(e);
-        }
-      };
-    }
-    catch (NoSuchMethodException e) {
-      throw new AssertionError(e);
-    }
-  }
-
+  private final @NotNull ClassLoaderLeakPreventor preventor;
   private final @NotNull AtomicBoolean lock;
-  private final @NotNull List<CleanUp> entries;
+  private final @NotNull List<CleanUp> cleanUps;
 
-  Registry(@NotNull AtomicBoolean lock, @NotNull List<CleanUp> entries) {
+  JarRevolverContext(
+      @NotNull ClassLoaderLeakPreventor preventor, @NotNull AtomicBoolean lock, @NotNull List<CleanUp> cleanUps) {
+    this.preventor = preventor;
     this.lock = lock;
-    this.entries = entries;
+    this.cleanUps = cleanUps;
+  }
+
+  void scheduleCleanUps(@NotNull ScheduledExecutorService executorService) {
+    if (!cleanUps.isEmpty()) {
+      AtomicInteger remaining = new AtomicInteger(cleanUps.size());
+
+      // ClassLoaderLeakPreventor#runCleanUps will be called after the last clean-up
+      cleanUps.forEach(f -> f.accept(executorService, remaining));
+    }
+    else {
+      // No other clean-ups, run immediately
+      preventor.runCleanUps();
+    }
+
+    Std.out(() -> cleanUps.size() + " clean-ups scheduled");
   }
 
   private static void runPreventorCleanUps(
-      @Nullable ClassLoaderLeakPreventor preventor,
+      @NotNull ClassLoaderLeakPreventor preventor,
       @NotNull AtomicInteger remainingCount,
       @NotNull AtomicBoolean isUsed) {
     if (isUsed.compareAndSet(false, true)) {
@@ -84,9 +60,9 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   }
 
   private static void runPreventorCleanUps(
-      @Nullable ClassLoaderLeakPreventor preventor,
+      @NotNull ClassLoaderLeakPreventor preventor,
       @NotNull AtomicInteger remainingCount) {
-    if (remainingCount.decrementAndGet() == 0 && preventor != null) {
+    if (remainingCount.decrementAndGet() == 0) {
       preventor.runCleanUps();
     }
   }
@@ -94,7 +70,7 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   private void register(@NotNull CleanUp cleanUp) {
     synchronized (lock) {
       if (!lock.get()) {
-        entries.add(cleanUp);
+        cleanUps.add(cleanUp);
         return;
       }
     }
@@ -102,7 +78,9 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   }
 
   private void register(@NotNull Consumer<Runnable> callback) {
-    register((preventor, executorService, remainingCount) -> executorService.execute(
+    ClassLoaderLeakPreventor preventor = this.preventor;
+
+    register((executorService, remainingCount) -> executorService.execute(
         () -> {
           AtomicBoolean isUsed = new AtomicBoolean();
 
@@ -110,8 +88,7 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
             Runnable runnable = () -> executorService.execute(
                 () -> runPreventorCleanUps(preventor, remainingCount, isUsed));
 
-            callback.accept(preventor == null ?
-                runnable : () -> doInLeakSafeClassLoader.accept(preventor, runnable));
+            callback.accept(() -> DO_IN_LEAK_SAFE_CLASS_LOADER.accept(preventor, runnable));
           }
           catch (Throwable t) {
             throwIfFatal(t);
@@ -125,7 +102,9 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
   }
 
   private void register(@NotNull Duration delay, @NotNull Runnable callback) {
-    register((preventor, executorService, remainingCount) -> executorService.schedule(
+    ClassLoaderLeakPreventor preventor = this.preventor;
+
+    register((executorService, remainingCount) -> executorService.schedule(
         () -> {
           try {
             callback.run();
@@ -141,7 +120,6 @@ class Registry implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Run
         delay.toMillis(),
         TimeUnit.MILLISECONDS));
   }
-
 
   @SuppressWarnings("unchecked") // Enforcement on outbound parameter types is not feasible
   @Override
