@@ -7,6 +7,7 @@ import se.jiderhamn.classloader.leak.prevention.ClassLoaderLeakPreventor;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,7 +19,7 @@ import static io.github.portfoligno.revolve.jar.ErrorHelper.checkIsInstance;
 import static io.github.portfoligno.revolve.jar.ErrorHelper.throwIfFatal;
 import static io.github.portfoligno.revolve.jar.PreventorHelper.DO_IN_LEAK_SAFE_CLASS_LOADER;
 
-class JarRevolverContext implements Consumer<Consumer<Runnable>>, BiConsumer<Duration, Runnable> {
+class JarRevolverContext implements Consumer<Object>, BiConsumer<Duration, Runnable> {
   @FunctionalInterface
   interface CleanUp {
     void accept(@NotNull ScheduledExecutorService executorService, @NotNull AtomicInteger remainingCount);
@@ -77,7 +78,7 @@ class JarRevolverContext implements Consumer<Consumer<Runnable>>, BiConsumer<Dur
     throw new IllegalStateException("The clean-up list is not modifiable outside of the factory call");
   }
 
-  private void register(@NotNull Consumer<Runnable> callback) {
+  private void register(@NotNull Executor callback) {
     ClassLoaderLeakPreventor preventor = this.preventor;
 
     register((executorService, remainingCount) -> executorService.execute(
@@ -88,7 +89,7 @@ class JarRevolverContext implements Consumer<Consumer<Runnable>>, BiConsumer<Dur
             Runnable runnable = () -> executorService.execute(
                 () -> runPreventorCleanUps(preventor, remainingCount, isUsed));
 
-            callback.accept(() -> DO_IN_LEAK_SAFE_CLASS_LOADER.accept(preventor, runnable));
+            callback.execute(() -> DO_IN_LEAK_SAFE_CLASS_LOADER.accept(preventor, runnable));
           }
           catch (Throwable t) {
             throwIfFatal(t);
@@ -123,9 +124,17 @@ class JarRevolverContext implements Consumer<Consumer<Runnable>>, BiConsumer<Dur
 
   @SuppressWarnings("unchecked") // Enforcement on outbound parameter types is not feasible
   @Override
-  public void accept(@Nullable Consumer<Runnable> callback) {
-    register(
-        checkIsInstance(callback, Consumer.class));
+  public void accept(@Nullable Object callback) {
+    if (callback instanceof Consumer) {
+      Std.err("Using Consumer<Runnable> for asynchronous clean-up is deprecated.");
+
+      register(
+          ((Consumer) callback)::accept);
+    }
+    else {
+      register(
+          checkIsInstance(callback, Executor.class));
+    }
   }
 
   @Override
