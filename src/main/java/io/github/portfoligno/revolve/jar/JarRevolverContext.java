@@ -14,12 +14,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static io.github.portfoligno.revolve.jar.ErrorHelper.checkIsInstance;
 import static io.github.portfoligno.revolve.jar.ErrorHelper.throwIfFatal;
 import static io.github.portfoligno.revolve.jar.PreventorHelper.DO_IN_LEAK_SAFE_CLASS_LOADER;
 
-class JarRevolverContext implements Consumer<Object>, BiConsumer<Duration, Runnable> {
+class JarRevolverContext
+    implements Consumer<Object>, BiConsumer<Duration, Runnable>, Function<String, Object> {
   @FunctionalInterface
   interface CleanUp {
     void accept(@NotNull ScheduledExecutorService executorService, @NotNull AtomicInteger remainingCount);
@@ -89,7 +91,7 @@ class JarRevolverContext implements Consumer<Object>, BiConsumer<Duration, Runna
             Runnable runnable = () -> executorService.execute(
                 () -> runPreventorCleanUps(preventor, remainingCount, isUsed));
 
-            callback.execute(() -> DO_IN_LEAK_SAFE_CLASS_LOADER.accept(preventor, runnable));
+            callback.execute(() -> DO_IN_LEAK_SAFE_CLASS_LOADER.apply(preventor).execute(runnable));
           }
           catch (Throwable t) {
             throwIfFatal(t);
@@ -142,5 +144,16 @@ class JarRevolverContext implements Consumer<Object>, BiConsumer<Duration, Runna
     register(
         checkIsInstance(delay, Duration.class),
         checkIsInstance(callback, Runnable.class));
+  }
+
+  @Override
+  public Object apply(@Nullable String key) {
+    if (key != null) {
+      switch (key) {
+        case "LEAK_SAFE_EXECUTOR":
+          return DO_IN_LEAK_SAFE_CLASS_LOADER.apply(preventor);
+      }
+    }
+    throw new IllegalArgumentException(String.valueOf(key));
   }
 }

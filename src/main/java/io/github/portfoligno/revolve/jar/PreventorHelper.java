@@ -8,15 +8,16 @@ import se.jiderhamn.classloader.leak.prevention.PreClassLoaderInitiator;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Collection;
-import java.util.function.BiConsumer;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 class PreventorHelper {
-  static final BiConsumer<ClassLoaderLeakPreventor, Runnable> DO_IN_LEAK_SAFE_CLASS_LOADER =
+  static final Function<ClassLoaderLeakPreventor, Executor> DO_IN_LEAK_SAFE_CLASS_LOADER =
       getDoInLeakSafeClassLoader();
 
   @SuppressWarnings("OptionalGetWithoutIsPresent")
-  private static BiConsumer<ClassLoaderLeakPreventor, Runnable> getDoInLeakSafeClassLoader() {
+  private static Function<ClassLoaderLeakPreventor, Executor> getDoInLeakSafeClassLoader() {
     try {
       Method method = ClassLoaderLeakPreventor.class.getDeclaredMethod(
           Stream
@@ -28,7 +29,7 @@ class PreventorHelper {
           Runnable.class);
       method.setAccessible(true);
 
-      return (preventor, runnable) -> {
+      return preventor -> runnable -> {
         try {
           method.invoke(preventor, runnable);
         }
